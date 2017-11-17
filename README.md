@@ -24,7 +24,7 @@ web:
   ports:
     - "80:80"
 wordpress:
-  image: wordpress:php7.0-fpm-alpine
+  image: quay.io/tkaefer/wordpress-php71-fpm-alpine:wordpress4.9-php71-fpm-alpine
   restart: unless-stopped
   links:
     - mariadb:mysql
