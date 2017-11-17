@@ -1,3 +1,5 @@
+[![Docker Repository on Quay](https://quay.io/repository/tkaefer/wordpress-php71-fpm-alpine/status "Docker Repository on Quay")](https://quay.io/repository/tkaefer/wordpress-php71-fpm-alpine)
+
 ## This image?
 
 clone of official wordpress docker image
