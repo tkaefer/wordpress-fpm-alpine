@@ -13,12 +13,16 @@ RUN apk add --no-cache bash	sed \
 	apk add --no-cache --virtual .build-deps \
 		libjpeg-turbo-dev \
 		libpng-dev \
+    autoconf build-base gcc \
 	; \
 	\
-	docker-php-ext-configure gd --with-png-dir=/usr --with-jpeg-dir=/usr; \
-	docker-php-ext-install gd mysqli opcache; \
+	docker-php-ext-configure gd --with-png-dir=/usr --with-jpeg-dir=/usr \
+  && docker-php-ext-install gd mysqli opcache \
+  && pecl install -o -f redis \
+  &&  rm -rf /tmp/pear \
+  &&  docker-php-ext-enable redis \
 	\
-	runDeps="$( \
+	&& runDeps="$( \
 		scanelf --needed --nobanner --format '%n#p' --recursive /usr/local/lib/php/extensions \
 			| tr ',' '\n' \
 			| sort -u \
