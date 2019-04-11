@@ -24,13 +24,52 @@ file_env() {
 }
 
 if [[ "$1" == apache2* ]] || [ "$1" == php-fpm ]; then
-	if ! [ -e index.php -a -e wp-includes/version.php ]; then
-		echo >&2 "WordPress not found in $PWD - copying now..."
-		if [ "$(ls -A)" ]; then
-			echo >&2 "WARNING: $PWD is not empty - press Ctrl+C now if this is an error!"
-			( set -x; ls -A; sleep 10 )
+	if [ "$(id -u)" = '0' ]; then
+		case "$1" in
+			apache2*)
+				user="${APACHE_RUN_USER:-www-data}"
+				group="${APACHE_RUN_GROUP:-www-data}"
+
+				# strip off any '#' symbol ('#1000' is valid syntax for Apache)
+				pound='#'
+				user="${user#$pound}"
+				group="${group#$pound}"
+				;;
+			*) # php-fpm
+				user='www-data'
+				group='www-data'
+				;;
+		esac
+	else
+		user="$(id -u)"
+		group="$(id -g)"
+	fi
+
+	if [ ! -e index.php ] && [ ! -e wp-includes/version.php ]; then
+		# if the directory exists and WordPress doesn't appear to be installed AND the permissions of it are root:root, let's chown it (likely a Docker-created directory)
+		if [ "$(id -u)" = '0' ] && [ "$(stat -c '%u:%g' .)" = '0:0' ]; then
+			chown "$user:$group" .
 		fi
-		tar cf - --one-file-system -C /usr/src/wordpress . | tar xf -
+
+		echo >&2 "WordPress not found in $PWD - copying now..."
+		if [ -n "$(ls -A)" ]; then
+			echo >&2 "WARNING: $PWD is not empty! (copying anyhow)"
+		fi
+		sourceTarArgs=(
+			--create
+			--file -
+			--directory /usr/src/wordpress
+			--owner "$user" --group "$group"
+		)
+		targetTarArgs=(
+			--extract
+			--file -
+		)
+		if [ "$user" != '0' ]; then
+			# avoid "tar: .: Cannot utime: Operation not permitted" and "tar: .: Cannot change mode to rwxr-xr-x: Operation not permitted"
+			targetTarArgs+=( --no-overwrite-dir )
+		fi
+		tar "${sourceTarArgs[@]}" . | tar "${targetTarArgs[@]}"
 		echo >&2 "Complete! WordPress has been successfully copied to $PWD"
 		if [ ! -e .htaccess ]; then
 			# NOTE: The "Indexes" option is disabled in the php:apache base image
@@ -46,11 +85,9 @@ if [[ "$1" == apache2* ]] || [ "$1" == php-fpm ]; then
 				</IfModule>
 				# END WordPress
 			EOF
-			chown www-data:www-data .htaccess
+			chown "$user:$group" .htaccess
 		fi
 	fi
-
-	# TODO handle WordPress upgrades magically in the same way, but only if wp-includes/version.php's $wp_version is less than /usr/src/wordpress/wp-includes/version.php's $wp_version
 
 	# allow any of these "Authentication Unique Keys and Salts." to be specified via
 	# environment variables with a "WORDPRESS_" prefix (ie, "WORDPRESS_AUTH_KEY")
@@ -69,9 +106,12 @@ if [[ "$1" == apache2* ]] || [ "$1" == php-fpm ]; then
 		WORDPRESS_DB_USER
 		WORDPRESS_DB_PASSWORD
 		WORDPRESS_DB_NAME
+		WORDPRESS_DB_CHARSET
+		WORDPRESS_DB_COLLATE
 		"${uniqueEnvs[@]/#/WORDPRESS_}"
 		WORDPRESS_TABLE_PREFIX
 		WORDPRESS_DEBUG
+		WORDPRESS_CONFIG_EXTRA
 	)
 	haveConfig=
 	for e in "${envs[@]}"; do
@@ -100,6 +140,8 @@ if [[ "$1" == apache2* ]] || [ "$1" == php-fpm ]; then
 		: "${WORDPRESS_DB_USER:=root}"
 		: "${WORDPRESS_DB_PASSWORD:=}"
 		: "${WORDPRESS_DB_NAME:=wordpress}"
+		: "${WORDPRESS_DB_CHARSET:=utf8}"
+		: "${WORDPRESS_DB_COLLATE:=}"
 
 		# version 4.4.1 decided to switch to windows line endings, that breaks our seds and awks
 		# https://github.com/docker-library/wordpress/issues/116
@@ -107,7 +149,17 @@ if [[ "$1" == apache2* ]] || [ "$1" == php-fpm ]; then
 		sed -ri -e 's/\r$//' wp-config*
 
 		if [ ! -e wp-config.php ]; then
-			awk '/^\/\*.*stop editing.*\*\/$/ && c == 0 { c = 1; system("cat") } { print }' wp-config-sample.php > wp-config.php <<'EOPHP'
+			awk '
+				/^\/\*.*stop editing.*\*\/$/ && c == 0 {
+					c = 1
+					system("cat")
+					if (ENVIRON["WORDPRESS_CONFIG_EXTRA"]) {
+						print "// WORDPRESS_CONFIG_EXTRA"
+						print ENVIRON["WORDPRESS_CONFIG_EXTRA"] "\n"
+					}
+				}
+				{ print }
+			' wp-config-sample.php > wp-config.php <<'EOPHP'
 // If we're behind a proxy server and using HTTPS, we need to alert Wordpress of that fact
 // see also http://codex.wordpress.org/Administration_Over_SSL#Using_a_Reverse_Proxy
 if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
@@ -115,7 +167,14 @@ if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROT
 }
 
 EOPHP
-			chown www-data:www-data wp-config.php
+			chown "$user:$group" wp-config.php
+		elif [ -e wp-config.php ] && [ -n "$WORDPRESS_CONFIG_EXTRA" ] && [[ "$(< wp-config.php)" != *"$WORDPRESS_CONFIG_EXTRA"* ]]; then
+			# (if the config file already contains the requested PHP code, don't print a warning)
+			echo >&2
+			echo >&2 'WARNING: environment variable "WORDPRESS_CONFIG_EXTRA" is set, but "wp-config.php" already exists'
+			echo >&2 '  The contents of this variable will _not_ be inserted into the existing "wp-config.php" file.'
+			echo >&2 '  (see https://github.com/docker-library/wordpress/issues/333 for more details)'
+			echo >&2
 		fi
 
 		# see http://stackoverflow.com/a/2705678/433558
@@ -149,6 +208,8 @@ EOPHP
 		set_config 'DB_USER' "$WORDPRESS_DB_USER"
 		set_config 'DB_PASSWORD' "$WORDPRESS_DB_PASSWORD"
 		set_config 'DB_NAME' "$WORDPRESS_DB_NAME"
+		set_config 'DB_CHARSET' "$WORDPRESS_DB_CHARSET"
+		set_config 'DB_COLLATE' "$WORDPRESS_DB_COLLATE"
 
 		for unique in "${uniqueEnvs[@]}"; do
 			uniqVar="WORDPRESS_$unique"
@@ -156,7 +217,7 @@ EOPHP
 				set_config "$unique" "${!uniqVar}"
 			else
 				# if not specified, let's generate a random value
-				currentVal="$(sed -rn -e "s/define\((([\'\"])$unique\2\s*,\s*)(['\"])(.*)\3\);/\4/p" wp-config.php)"
+				currentVal="$(sed -rn -e "s/define\(\s*(([\'\"])$unique\2\s*,\s*)(['\"])(.*)\3\s*\);/\4/p" wp-config.php)"
 				if [ "$currentVal" = 'put your unique phrase here' ]; then
 					set_config "$unique" "$(head -c1m /dev/urandom | sha1sum | cut -d' ' -f1)"
 				fi
@@ -171,7 +232,7 @@ EOPHP
 			set_config 'WP_DEBUG' 1 boolean
 		fi
 
-		TERM=dumb php -- <<'EOPHP'
+		if ! TERM=dumb php -- <<'EOPHP'
 <?php
 // database might not exist, so let's try creating it (just to be safe)
 
@@ -212,6 +273,12 @@ if (!$mysql->query('CREATE DATABASE IF NOT EXISTS `' . $mysql->real_escape_strin
 
 $mysql->close();
 EOPHP
+		then
+			echo >&2
+			echo >&2 "WARNING: unable to establish a database connection to '$WORDPRESS_DB_HOST'"
+			echo >&2 '  continuing anyways (which might have unexpected results)'
+			echo >&2
+		fi
 	fi
 
 	# now that we're definitely done writing configuration, let's clear out the relevant envrionment variables (so that stray "phpinfo()" calls don't leak secrets from our code)
