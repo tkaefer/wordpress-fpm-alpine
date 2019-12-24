@@ -1,4 +1,4 @@
-FROM php:7.4-fpm-alpine
+FROM php:7.3-fpm-alpine
 
 
 ENV WORDPRESS_VERSION 5.3.2
@@ -7,13 +7,15 @@ ENV WORDPRESS_SHA1 fded476f112dbab14e3b5acddd2bcfa550e7b01b
 VOLUME /var/www/html
 
 # docker-entrypoint.sh dependencies
-RUN apk add --no-cache bash	sed \
+RUN apk add --no-cache bash	sed zlib libpng \
  && set -ex; \
 	\
 	apk add --no-cache --virtual .build-deps \
 		libjpeg-turbo-dev \
 		libpng-dev \
     autoconf build-base gcc \
+    zlib-dev \
+    libpng-dev \
 	; \
 	\
 	docker-php-ext-configure gd --with-png-dir=/usr --with-jpeg-dir=/usr \
