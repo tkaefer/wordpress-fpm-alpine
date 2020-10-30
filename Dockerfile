@@ -1,8 +1,8 @@
 FROM php:7.4-fpm-alpine
 
 
-ENV WORDPRESS_VERSION 5.5.1
-ENV WORDPRESS_SHA1 d3316a4ffff2a12cf92fde8bfdd1ff8691e41931
+ENV WORDPRESS_VERSION 5.5.3
+ENV WORDPRESS_SHA1 61015720c679a6cbf9ad51701f0f3fedb51b3273
 
 VOLUME /var/www/html
 
@@ -41,6 +41,7 @@ RUN apk add --no-cache bash	sed zlib libpng libzip; \
 	)"; \
 	apk add --virtual .wordpress-phpexts-rundeps $runDeps; \
 	apk del .build-deps; \
+  docker-php-ext-enable opcache; \
   { \
 		echo 'opcache.memory_consumption=128'; \
 		echo 'opcache.interned_strings_buffer=8'; \
@@ -67,7 +68,14 @@ RUN apk add --no-cache bash	sed zlib libpng libzip; \
 	echo "$WORDPRESS_SHA1 *wordpress.tar.gz" | sha1sum -c -; \
 	tar -xzf wordpress.tar.gz -C /usr/src/; \
 	rm wordpress.tar.gz; \
-	chown -R www-data:www-data /usr/src/wordpress
+	chown -R www-data:www-data /usr/src/wordpress; \
+  mkdir wp-content; \
+	for dir in /usr/src/wordpress/wp-content/*/ cache; do \
+		dir="$(basename "${dir%/}")"; \
+		mkdir "wp-content/$dir"; \
+	done; \
+	chown -R www-data:www-data wp-content; \
+	chmod -R 777 wp-content
 
 
 COPY docker-entrypoint.sh /usr/local/bin/
