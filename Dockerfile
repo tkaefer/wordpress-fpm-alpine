@@ -4,7 +4,7 @@
 # PLEASE DO NOT EDIT IT DIRECTLY.
 #
 
-FROM php:8.0-fpm-alpine
+FROM php:8-fpm-alpine
 
 # persistent dependencies
 RUN set -eux; \
@@ -82,8 +82,8 @@ RUN { \
 	} > /usr/local/etc/php/conf.d/error-logging.ini
 
 RUN set -eux; \
-	version='5.8.1'; \
-	sha1='21e50add5a51cd9a18610244c942c08f7abeccd8'; \
+	version='5.8.2'; \
+	sha1='c3b1b59553eafbf301c83b14c5eeae4cf1c86044'; \
 	\
 	curl -o wordpress.tar.gz -fL "https://wordpress.org/wordpress-$version.tar.gz"; \
 	echo "$sha1 *wordpress.tar.gz" | sha1sum -c -; \
